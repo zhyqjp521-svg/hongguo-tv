@@ -328,12 +328,6 @@
           <div class="app-update-actions"><button class="playback-mode-action account-action" id="mpv-decode-auto" data-mode="mpv_auto" data-focus="mpv-decode-auto" aria-pressed="false" data-i18n="settings.autoDecode">自动解码</button><button class="playback-mode-action account-action" id="mpv-decode-software" data-mode="mpv_software" data-focus="mpv-decode-software" aria-pressed="false" data-i18n="settings.softwareDecode">软件解码</button></div>
           <p id="mpv-decode-state" role="status" aria-live="polite"></p>
         </div>
-        <div class="settings-card app-update-card is-hidden" id="mpv-playback-settings">
-          <h2>播放解码</h2>
-          <p>自动解码优先尝试硬件加速；画面异常时可选软件解码。设置在下次播放或切集时生效。</p>
-          <div class="app-update-actions"><button class="playback-mode-action account-action" id="mpv-decode-auto" data-mode="mpv_auto" data-focus="mpv-decode-auto" aria-pressed="false">自动解码</button><button class="playback-mode-action account-action" id="mpv-decode-software" data-mode="mpv_software" data-focus="mpv-decode-software" aria-pressed="false">软件解码</button></div>
-          <p id="mpv-decode-state" role="status" aria-live="polite"></p>
-        </div>
       </section>
 
       <section id="support-page" class="page-workspace support-page is-hidden" aria-labelledby="support-title">
@@ -376,8 +370,8 @@
 
         <div class="bottom-controls" data-focus-zone="controls" aria-label="播放控制" data-i18n-aria-label="hero.playbackControls">
           <div class="playback-timeline">
-            <span class="time-label">00:00 / --:--</span>
-            <button class="control-button progress-track" id="control-progress" data-focus="control-progress" role="slider" aria-label="播放进度" data-i18n-aria-label="hero.playbackProgress" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" disabled><span></span></button>
+            <div class="playback-time"><span class="time-label">00:00 / --:--</span><span class="progress-help" id="progress-help" data-i18n="hero.seekHelp">← → 快退 / 快进 10 秒</span></div>
+            <button class="control-button progress-track" id="control-progress" data-focus="control-progress" role="slider" aria-describedby="progress-help" aria-label="播放进度" data-i18n-aria-label="hero.playbackProgress" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" disabled><span></span></button>
           </div>
           <div class="playback-buttons">
           <button class="control-button has-icon" data-action="pause" data-focus="control-pause" aria-label="播放" data-i18n-aria-label="common.play"><span class="control-content"><svg aria-hidden="true" focusable="false"><use href="#icon-play" xlink:href="#icon-play"></use></svg><span class="control-label" data-i18n="common.play">播放</span></span></button>

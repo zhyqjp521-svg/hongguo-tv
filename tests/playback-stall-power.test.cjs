@@ -140,3 +140,44 @@ test('switching quality while buffering retains the last watched position', asyn
   assert.deepEqual(positions, [30]);
   assert.equal(f.playback.position, 30);
 });
+
+test('buffering explains recovery once without repeated live announcements', () => {
+  const f = fixture(); load(f.context, 'watchPlayback', 'clearRangeTransitionHint');
+  f.now(4500); f.context.watchPlayback(); f.context.watchPlayback();
+  assert.equal(f.statuses.length, 1);
+  assert.match(f.statuses[0][0], /自动重连/);
+  assert.equal(f.refreshes.length, 0);
+});
+
+test('buffering keeps visible remote controls available until playback resumes', () => {
+  const f = fixture(); const timers = [];
+  Object.assign(f.context, {clearTimeout() {}, setTimeout: fn => { timers.push(fn); return 1; },
+    controlsTimer: null, shell: {classList: {contains: () => false}}, detailModalOpen: false,
+    confirmOpen: false, playerOptionsOpen: false, discussionOpen: false, zoneOf: () => 'controls'});
+  load(f.context, 'scheduleControlsHide', 'revealControls');
+  f.context.scheduleControlsHide(); assert.equal(timers.length, 0);
+  f.playback.presentation.waiting = false;
+  f.context.scheduleControlsHide(); assert.equal(timers.length, 1);
+});
+
+test('remote seek feedback reports the clamped target near episode boundaries', () => {
+  const f = fixture(); const notices = [];
+  f.context.showNotice = message => notices.push(message);
+  f.context.clockText = position => String(position);
+  f.context.revealControls = () => {};
+  load(f.context, 'seekTo', 'syncNativePlayerBounds');
+  assert.equal(f.context.seekBy(-50, true), true);
+  assert.equal(f.video.currentTime, 0);
+  assert.match(notices.at(-1), /0/);
+  assert.equal(f.context.seekTo(500), true);
+  assert.equal(f.video.currentTime, 119.75);
+  assert.match(notices.at(-1), /119.75/);
+  const count = notices.length; f.video.duration = NaN;
+  assert.equal(f.context.seekTo(10), false); assert.equal(notices.length, count);
+});
+
+test('settings controls have unique IDs so remote focus and decode state target one element', () => {
+  const html = fs.readFileSync(require.resolve('../core/cmd/hongguotv/ui/index.html'), 'utf8');
+  const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
+  assert.equal(ids.length, new Set(ids).size);
+});

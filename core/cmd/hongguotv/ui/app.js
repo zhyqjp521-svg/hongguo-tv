@@ -2037,7 +2037,7 @@
   function scheduleControlsHide() {
     clearTimeout(controlsTimer);
     var video = document.getElementById('hero-video');
-    if (!isPlaybackPage() || shell.classList.contains('is-controls-hidden') || video.paused || video.ended || detailModalOpen || (typeof actorWorksOpen !== 'undefined' && actorWorksOpen) || confirmOpen || playerOptionsOpen || discussionOpen || ['sidebar', 'channels'].indexOf(zoneOf(document.activeElement)) >= 0) return;
+    if (!isPlaybackPage() || shell.classList.contains('is-controls-hidden') || video.paused || video.ended || (activePlayback && activePlayback.presentation && activePlayback.presentation.waiting) || detailModalOpen || (typeof actorWorksOpen !== 'undefined' && actorWorksOpen) || confirmOpen || playerOptionsOpen || discussionOpen || ['sidebar', 'channels'].indexOf(zoneOf(document.activeElement)) >= 0) return;
     controlsTimer = setTimeout(function () { hideControls(); }, 4000);
   }
   function revealControls() {
@@ -2466,6 +2466,7 @@
     if (!activePlayback || !Number.isFinite(position) || !Number.isFinite(video.duration) || video.duration <= 0) return false;
     video.currentTime = Math.max(0, Math.min(position, Math.max(0, video.duration - .25)));
     updatePlaybackControls(); if (reveal !== false) revealControls();
+    showNotice(uiText('ui.seekPosition', '定位到 {time}', { time: clockText(video.currentTime) }));
     return true;
   }
   function seekBy(delta, reveal) {
@@ -3954,13 +3955,17 @@
     var since = presentation.waiting ? presentation.bufferingSince : presentation.lastAdvanceAt;
     if (since == null) { since = now; if (presentation.waiting) presentation.bufferingSince = now; else presentation.lastAdvanceAt = now; }
     var elapsed = now - since;
-    if (presentation.waiting && elapsed >= 3000) playbackDebug('[Buffering] ms=' + elapsed + ' clock=' + video.currentTime + ' stable=' + presentation.position);
+    if (presentation.waiting && elapsed >= 3000 && elapsed < 8000 && presentation.bufferingHintAt !== since) {
+      presentation.bufferingHintAt = since;
+      setPlayerStatus(uiText('ui.bufferingRecovery', '正在缓冲，稍后会自动重连…'));
+      playbackDebug('[Buffering] ms=' + elapsed + ' clock=' + video.currentTime + ' stable=' + presentation.position);
+    }
     if (elapsed < 8000) return;
     // Mark waiting before any pause/save callbacks from the source reset.
     presentation.waiting = true;
     playbackDebug('[Stall recovery] ms=' + elapsed + ' position=' + presentation.position);
     if (!recoverPlaybackAfterError(playback, true)) {
-      setPlayerStatus(uiText('ui.playbackFailed', '这集未能正常播放'), true);
+      setPlayerStatus(uiText('ui.stallRecoveryFailed', '自动重连未成功，请重试播放或降低清晰度'), true);
       video.pause();
     }
   }
@@ -7084,6 +7089,7 @@
       activePlayback.presentation.waiting = true;
     }
     document.getElementById('danmaku-layer').classList.add('is-paused');
+    scheduleControlsHide();
     updatePlaybackControls();
     setPlayerStatus(document.getElementById('hero').classList.contains('is-preparing-video') || !activePlayback.started ? episodeLoadingText(activePlayback.episode) : uiText('ui.buffering', '正在缓冲…'));
     if (activePlayback.mode === 'range' && !activePlayback.rangeFallbackAttempted) scheduleRangeStallFallback(activePlayback);

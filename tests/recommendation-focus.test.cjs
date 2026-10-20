@@ -14,7 +14,7 @@ function fixture(mode = 'recommend', zone = 'channels') {
     shell: { classList: { contains: () => state.hidden } },
     lastPageFocus: { recommend: feed, search: input }, searchInput: input,
     detailModalOpen: false, confirmOpen: false, playerOptionsOpen: false, discussionOpen: false,
-    controlsTimer: 1,
+    controlsTimer: 1, activePlayback: null,
     pageMode: () => state.mode, isPlaybackPage: () => ['recommend', 'player'].includes(state.mode),
     zoneOf: () => state.zone, activeChannel: () => channel, focusables: () => [feed, input],
     hideControls: () => { state.hidden = true; }
