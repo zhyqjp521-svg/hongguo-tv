@@ -373,7 +373,7 @@
   var playbackPrefetchHandoff = null;
   var playbackAudioHold = null;
   var playbackTiming = [];
-  var playbackRecovery = HongguoPlaybackRecovery.create({ maxAttempts: 1 });
+  var playbackRecovery = HongguoPlaybackRecovery.create({ maxAttempts: 3 });
   // Bounded, memory-only diagnostics. No drama IDs, titles or account data.
   window.HongguoTVPlaybackTiming = { snapshot: function () { return playbackTiming.map(function (item) { return Object.assign({}, item); }); } };
   var episodePrefetch = HongguoEpisodePrefetch.create({
@@ -797,6 +797,7 @@
   function tickDanmaku() {
     var video = document.getElementById('hero-video');
     if (!danmakuEnabled || !activePlayback || !activePlayback.vid || video.paused || !isPlaybackPage() || applicationHidden() || applicationInBackground) return;
+    if (activePlayback.presentation && activePlayback.presentation.waiting) return;
     var now = Math.floor(video.currentTime * 1000); var windowStart = Math.floor(now / 30000) * 30000;
     if (danmakuWindow !== windowStart && !danmakuBusy) {
       danmakuWindow = windowStart; danmakuBusy = true; danmakuRows = [];
@@ -2114,7 +2115,8 @@
   function updatePlaybackControls() {
     var video = document.getElementById('hero-video');
     var duration = Number.isFinite(video.duration) ? video.duration : 0;
-    var position = Math.min(duration, Number(video.currentTime) || 0);
+    var presentation = activePlayback && activePlayback.presentation;
+    var position = Math.min(duration, presentation && (presentation.waiting || presentation.failed) ? presentation.position : Number(video.currentTime) || 0);
     var progress = document.getElementById('control-progress');
     document.querySelector('.time-label').textContent = clockText(position) + ' / ' + clockText(duration);
     progress.disabled = !duration;
@@ -2361,7 +2363,8 @@
     var video = document.getElementById('hero-video'); var playback = activePlayback;
     var epoch = ++qualityEpoch; var generation = feedGeneration;
     qualityPrevious = { playback: playback, playing: !video.paused && !video.ended };
-    var previous = qualityPrevious; var position = video.currentTime;
+    var previous = qualityPrevious;
+    var position = playback.presentation && playback.presentation.waiting ? playback.presentation.position : video.currentTime;
     clearRangeStallTimer();
     video.pause(); document.getElementById('player-options-message').textContent = uiText('ui.preparingQuality', '正在准备 {quality}…', { quality: value || uiText('ui.autoQuality', '自动清晰度') });
     qualityRequest = typeof AbortController === 'function' ? new AbortController() : null;
@@ -2465,7 +2468,12 @@
     updatePlaybackControls(); if (reveal !== false) revealControls();
     return true;
   }
-  function seekBy(delta, reveal) { return seekTo(document.getElementById('hero-video').currentTime + delta, reveal); }
+  function seekBy(delta, reveal) {
+    var video = document.getElementById('hero-video');
+    var presentation = activePlayback && activePlayback.presentation;
+    var position = presentation && presentation.waiting ? presentation.position : video.currentTime;
+    return seekTo(position + delta, reveal);
+  }
   function syncNativePlayerBounds() {
     var adapter = window.HongguoNativePlaybackAdapter;
     if (adapter && typeof adapter.syncBounds === 'function') adapter.syncBounds();
@@ -3360,7 +3368,7 @@
     var item = feedItems[feedIndex], playback = activePlayback, video = document.getElementById('hero-video');
     var checkpoint = null;
     if (playback && playback.owner === accountEpoch && playback.generation === feedGeneration && playback.item.series_id === item.series_id) {
-      checkpoint = { episode: playback.episode, position: playback.started ? Math.max(0, Number(video.currentTime) || 0) : playback.position || 0, completed: !!playback.completed };
+      checkpoint = { episode: playback.episode, position: playback.presentation && (playback.presentation.waiting || playback.presentation.failed) ? playback.presentation.position : playback.started ? Math.max(0, Number(video.currentTime) || 0) : playback.position || 0, completed: !!playback.completed };
     } else if (playbackRequest && playbackRequest.index === feedIndex && playbackRequest.episode) {
       checkpoint = { episode: playbackRequest.episode, position: playbackRequest.position || 0, completed: false };
     }
@@ -3500,6 +3508,9 @@
     var playback = activePlayback;
     if (!playback || !playback.started) return Promise.resolve(false);
     var video = document.getElementById('hero-video');
+    // Neither periodic nor forced writes may commit a clock that ran ahead
+    // while the rendered video was stalled. Keep the previous durable record.
+    if (playback.presentation && (playback.presentation.waiting || playback.presentation.failed) || video.seeking) return Promise.resolve(false);
     var now = Date.now();
     if (!force && now - playback.lastWrite < 10000) return Promise.resolve(false);
     playback.lastWrite = now;
@@ -3908,16 +3919,50 @@
       });
     });
   }
-  function recoverPlaybackAfterError(playback) {
+  function recoverPlaybackAfterError(playback, stalled) {
     if (!playback || playback !== activePlayback || playback.generation !== feedGeneration) return false;
-    var action = playbackRecovery.next({ native: playbackEngineName() });
+    var action = playbackRecovery.next({ native: playbackEngineName(), stalled: !!stalled });
     if (action !== 'refresh') return false;
     var video = document.getElementById('hero-video');
-    var position = Math.max(0, Number(video.currentTime) || Number(playback.position) || 0);
+    var position = playback.presentation ? playback.presentation.position : Math.max(0, Number(video.currentTime) || Number(playback.position) || 0);
     playback.recoveryAttempts = playbackRecovery.attempts();
-    showNotice(uiText('content.sourceRefreshing', '正在刷新播放地址…'));
+    showNotice(uiText('content.sourceRefreshing', '正在刷新播放地址…') + ' (' + playback.recoveryAttempts + '/3)');
     playFeedItem(feedIndex, playback.episode, position, null, null, { recoveryAttempts: playback.recoveryAttempts });
     return true;
+  }
+  function updatePlaybackPower() {
+    var power = window.HongguoTVPower;
+    if (!power || !power.setActive) return;
+    var video = document.getElementById('hero-video');
+    var playback = activePlayback, presentation = playback && playback.presentation;
+    var active = isPlaybackPage() && !applicationInBackground && !applicationHidden() &&
+      (!!playbackInfoRequest || !!(playback && presentation && !presentation.failed &&
+        video.getAttribute('src') && !video.paused && !video.ended));
+    // Buffering is still a playback intent: do not release screen-on just
+    // because the player is temporarily not rendering or is low on data.
+    try { power.setActive(!!active); } catch (ignoredPower) {}
+  }
+  function watchPlayback() {
+    var playback = activePlayback, presentation = playback && playback.presentation;
+    if (!playback || !presentation || playback.generation !== feedGeneration || !playback.started || presentation.failed) return;
+    var video = document.getElementById('hero-video'), now = Date.now();
+    if (!currentPlaybackPresentation(playback, presentation, video)) return;
+    if (!isPlaybackPage() || applicationInBackground || applicationHidden() || video.paused || video.ended || video.seeking) {
+      presentation.lastAdvanceAt = now; presentation.bufferingSince = null;
+      return;
+    }
+    var since = presentation.waiting ? presentation.bufferingSince : presentation.lastAdvanceAt;
+    if (since == null) { since = now; if (presentation.waiting) presentation.bufferingSince = now; else presentation.lastAdvanceAt = now; }
+    var elapsed = now - since;
+    if (presentation.waiting && elapsed >= 3000) playbackDebug('[Buffering] ms=' + elapsed + ' clock=' + video.currentTime + ' stable=' + presentation.position);
+    if (elapsed < 8000) return;
+    // Mark waiting before any pause/save callbacks from the source reset.
+    presentation.waiting = true;
+    playbackDebug('[Stall recovery] ms=' + elapsed + ' position=' + presentation.position);
+    if (!recoverPlaybackAfterError(playback, true)) {
+      setPlayerStatus(uiText('ui.playbackFailed', '这集未能正常播放'), true);
+      video.pause();
+    }
   }
   function clearRangeTransitionHint() {
     clearTimeout(rangeTransitionTimer);
@@ -3940,7 +3985,7 @@
       if (activePlayback !== playback || generation !== feedGeneration || playback.mode !== 'range' ||
           playback.rangeFallbackAttempted || video.paused || video.seeking || applicationInBackground || applicationHidden()) return;
       var position = Math.max(0, Number(video.currentTime) || 0);
-      if (position > lastPosition + .25) {
+      if (position > lastPosition + .25 && !(playback.presentation && playback.presentation.waiting)) {
         scheduleRangeStallFallback(playback);
         return;
       }
@@ -4086,7 +4131,7 @@
   }
   function bindPlaybackPresentation(playback, source) {
     playback.presentation = { source: source, position: Number(playback.position) || 0, epoch: 0, pending: false, waiting: false,
-      rendered: false, frame_at: 0, failed: false };
+      rendered: false, frame_at: 0, failed: false, lastAdvanceAt: Date.now(), bufferingSince: null, frames: readPlaybackFrames(document.getElementById('hero-video')) };
   }
   function interruptPlaybackPresentation(playback) {
     if (!playback || !playback.presentation) return;
@@ -4182,8 +4227,17 @@
     if (applicationInBackground || applicationHidden()) { video.pause(); return; }
     if (!presentation || presentation.failed) return;
     if (!currentPlaybackPresentation(playback, presentation, video) || video.paused || video.ended || video.seeking || video.readyState < 2) return;
+    if (presentation.waiting && Number(video.currentTime) > presentation.position + 2) {
+      // A real playing callback, not a moving clock, ends a buffer. Rewind
+      // drift before the next progress save or visible timeline update.
+      presentation.waiting = false; presentation.bufferingSince = null; presentation.lastAdvanceAt = Date.now();
+      video.currentTime = presentation.position;
+      resetDanmaku();
+      return;
+    }
     clearRangeStallTimer();
-    presentation.waiting = false;
+    presentation.waiting = false; presentation.bufferingSince = null; presentation.lastAdvanceAt = Date.now();
+    presentation.position = Math.max(0, Number(video.currentTime) || 0);
     playback.started = true;
     playback.stableSince = Date.now();
     finishPlaybackPreparation(playback);
@@ -4215,10 +4269,20 @@
   function checkPlaybackProgress(video) {
     var playback = activePlayback, presentation = playback && playback.presentation;
     if (!currentPlaybackPresentation(playback, presentation, video)) return;
+    // Some WebViews omit the second playing event. An increasing count of
+    // non-dropped video frames can prove recovery; clock/readyState alone cannot.
+    var frames = readPlaybackFrames(video);
+    if (presentation.waiting) {
+      if (frames === null || presentation.frames == null || frames <= presentation.frames) return;
+      markPlaybackStarted(playback);
+      if (presentation.waiting || video.seeking) return;
+    }
+    presentation.frames = frames;
     var position = Number(video.currentTime) || 0;
     var advancing = position > presentation.position + .001 && !video.seeking && !video.paused && !video.ended && video.readyState >= 2;
     presentation.position = position;
     if (advancing) {
+      presentation.lastAdvanceAt = Date.now();
       clearRangeStallTimer();
       presentation.waiting = false;
       if (!playback.started) markPlaybackStarted(playback);
@@ -4227,11 +4291,21 @@
     }
     finishPlaybackPreparation(playback);
   }
+  function readPlaybackFrames(video) {
+    try {
+      var frames;
+      if (typeof video.getVideoPlaybackQuality === 'function') {
+        var quality = video.getVideoPlaybackQuality();
+        frames = Number(quality.totalVideoFrames) - Number(quality.droppedVideoFrames || 0);
+      } else frames = Number(video.webkitDecodedFrameCount);
+      return isFinite(frames) && frames >= 0 ? frames : null;
+    } catch (ignoredFrames) { return null; }
+  }
   function fallbackRangePlayback(playback) {
     if (!playback || playback !== activePlayback || playback.mode !== 'range' || playback.rangeFallbackAttempted || playback.generation !== feedGeneration) return false;
     var video = document.getElementById('hero-video');
     var hero = document.getElementById('hero');
-    var position = Math.max(0, Number(video.currentTime) || Number(playback.position) || 0);
+    var position = playback.presentation ? playback.presentation.position : Math.max(0, Number(video.currentTime) || Number(playback.position) || 0);
     clearRangeStallTimer();
     var generation = playback.generation;
     var request = typeof AbortController === 'function' ? new AbortController() : null;
@@ -6963,7 +7037,7 @@
     if (activePlayback && activePlayback.presentation) {
       activePlayback.presentation.rendered = true;
       activePlayback.presentation.frame_at = Date.now();
-      if (!media.paused && !media.seeking && media.readyState >= 2) activePlayback.presentation.waiting = false;
+      if (!activePlayback.started && !media.paused && !media.seeking && media.readyState >= 2) activePlayback.presentation.waiting = false;
       finishPlaybackPreparation(activePlayback);
     }
   });
@@ -6975,7 +7049,7 @@
     // WebView has not received `playing` yet.  Waiting for playback.started
     // here leaves some Android 9 WebViews behind an endless black cover while
     // Media3 is already advancing the clock.
-    if (!media.paused && !media.seeking && media.readyState >= 3) presentation.waiting = false;
+    if (!activePlayback.started && !media.paused && !media.seeking && media.readyState >= 3) presentation.waiting = false;
     finishPlaybackPreparation(activePlayback);
   }
   media.addEventListener('loadeddata', checkPlaybackData);
@@ -7002,12 +7076,30 @@
     if (!activePlayback) return;
     activePlayback.stableSince = 0;
     interruptPlaybackPresentation(activePlayback);
-    if (activePlayback.presentation) activePlayback.presentation.waiting = true;
+    if (activePlayback.presentation) {
+      if (!activePlayback.presentation.waiting) {
+        activePlayback.presentation.bufferingSince = Date.now();
+        activePlayback.presentation.frames = readPlaybackFrames(media);
+      }
+      activePlayback.presentation.waiting = true;
+    }
+    document.getElementById('danmaku-layer').classList.add('is-paused');
+    updatePlaybackControls();
     setPlayerStatus(document.getElementById('hero').classList.contains('is-preparing-video') || !activePlayback.started ? episodeLoadingText(activePlayback.episode) : uiText('ui.buffering', '正在缓冲…'));
     if (activePlayback.mode === 'range' && !activePlayback.rangeFallbackAttempted) scheduleRangeStallFallback(activePlayback);
   });
   media.addEventListener('stalled', function () { if (activePlayback && activePlayback.mode === 'range') scheduleRangeStallFallback(activePlayback); });
-  media.addEventListener('seeking', function () { if (activePlayback) activePlayback.stableSince = 0; interruptPlaybackPresentation(activePlayback); });
+  media.addEventListener('seeking', function () {
+    if (activePlayback) {
+      activePlayback.stableSince = 0;
+      if (activePlayback.presentation) {
+        activePlayback.presentation.position = Math.max(0, Number(media.currentTime) || 0);
+        activePlayback.presentation.lastAdvanceAt = Date.now();
+        activePlayback.presentation.bufferingSince = null;
+      }
+    }
+    interruptPlaybackPresentation(activePlayback);
+  });
   media.addEventListener('seeked', function () {
     if (activePlayback && activePlayback.started && !media.paused && !media.ended) activePlayback.stableSince = Date.now();
     if (activePlayback && activePlayback.presentation) activePlayback.presentation.position = Number(media.currentTime) || 0;
@@ -7039,6 +7131,8 @@
     continueAfterEpisode(playback);
   });
   document.addEventListener('visibilitychange', function () { if (desktopShell) return; if (applicationHidden()) pauseForBackground(); else resumeFromBackground(); });
+  ['playing', 'waiting', 'pause', 'ended', 'emptied', 'error'].forEach(function (name) { media.addEventListener(name, updatePlaybackPower); });
+  setInterval(function () { updatePlaybackPower(); watchPlayback(); }, 1000);
 
   function openQRCode(card, image, title) {
     supportReturnFocus = card; supportModalOpen = true;

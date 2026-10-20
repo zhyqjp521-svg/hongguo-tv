@@ -29,12 +29,14 @@ android {
     productFlavors {
         standard {
             dimension "player"
+            manifestPlaceholders = [debugAppLabel: "红果短剧·标准测试"]
             resValue "string", "app_name", "红果短剧"
             buildConfigField "String", "VARIANT_ID", '"standard"'
             buildConfigField "String", "PLAYER_ENGINE", '"webview_media3"'
         }
         mpv {
             dimension "player"
+            manifestPlaceholders = [debugAppLabel: "红果短剧·MPV测试"]
             applicationIdSuffix ".mpv"
             minSdk 23
             versionCode mpvVersionCode

@@ -5,17 +5,18 @@
   // into an unbounded source/player restart loop on a TV.
   function create(options) {
     options = options || {};
-    var maximum = Math.max(0, Number(options.maxAttempts) || 1);
+    var configured = Number(options.maxAttempts);
+    var maximum = isFinite(configured) && configured >= 0 ? Math.floor(configured) : 1;
     var attempts = 0;
-    var refreshed = false;
     return {
-      reset: function () { attempts = 0; refreshed = false; },
+      reset: function () { attempts = 0; },
       next: function (context) {
         context = context || {};
-        if (context.native === 'mpv') return 'stop';
-        if (!refreshed && attempts < maximum) {
+        // Generic decoder/session errors still stop MPV. A measured playback
+        // stall is recoverable through its existing fenced source-switch path.
+        if (context.native === 'mpv' && !context.stalled) return 'stop';
+        if (attempts < maximum) {
           attempts++;
-          refreshed = true;
           return 'refresh';
         }
         return 'stop';

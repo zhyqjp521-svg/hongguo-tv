@@ -21,3 +21,13 @@ test('reset starts a new bounded recovery window', () => {
   recovery.reset();
   assert.equal(recovery.next({}), 'refresh');
 });
+
+test('MPV stalls may refresh at most three times while generic MPV errors still stop', () => {
+  const recovery = create({maxAttempts: 3});
+  assert.equal(recovery.next({native: 'mpv'}), 'stop');
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    assert.equal(recovery.next({native: 'mpv', stalled: true}), 'refresh');
+    assert.equal(recovery.attempts(), attempt);
+  }
+  assert.equal(recovery.next({native: 'mpv', stalled: true}), 'stop');
+});

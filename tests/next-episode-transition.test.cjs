@@ -11,7 +11,7 @@ function fixture({failWrite=false,ready=true,engine='standard',sourceGate=null,d
   const gate=deferred(), calls=[], resolverURLs=[], writes=[], notices=[], frames=new Map(), handlers={}, timers=[];let frameID=0;
   function classes(...initial){const names=new Set(initial);return {add(...x){x.forEach(n=>names.add(n))},remove(...x){x.forEach(n=>names.delete(n))},contains(n){return names.has(n)},toggle(n,on){if(on)names.add(n);else names.delete(n)},names}}
   const hero={classList:classes('is-feed'),style:{}};
-  const video={currentTime:120,duration:120,paused:false,ended:false,seeking:false,readyState:4,videoWidth:720,videoHeight:1280,muted:false,volume:.75,classList:classes('has-source'),getAttribute(n){return this[n]||null},addEventListener(name,fn){handlers[name]=fn},pause(){this.paused=true},removeAttribute(n){delete this[n]},load(){calls.push('load');assert.equal(hero.classList.contains('is-preparing-video'),true)}};
+  const video={frames:0,getVideoPlaybackQuality(){return {totalVideoFrames:this.frames,droppedVideoFrames:0}},currentTime:120,duration:120,paused:false,ended:false,seeking:false,readyState:4,videoWidth:720,videoHeight:1280,muted:false,volume:.75,classList:classes('has-source'),getAttribute(n){return this[n]||null},addEventListener(name,fn){handlers[name]=fn},pause(){this.paused=true},removeAttribute(n){delete this[n]},load(){calls.push('load');assert.equal(hero.classList.contains('is-preparing-video'),true)}};
   const root={classList:classes(...(native?['native-playback']:[]))};
   const bounds={width:1400,height:900};
   const canvas={width:0,height:0,classList:classes(),style:{},parentNode:{getBoundingClientRect:()=>bounds},getContext(){return {drawImage(node){assert.equal(node,video);calls.push('capture');if(captureFailure===true)throw new Error('capture unavailable')},getImageData(){if(captureFailure==='read')throw new Error('tainted canvas');return {data:[12,34,56,255]}}}}};
@@ -349,10 +349,12 @@ test('history seeking between playing and cover paint retries without another pl
   assert.equal(f.hero.classList.contains('is-preparing-video'),false);assert.equal(f.video.muted,false);
   assert.equal(f.c.playbackTiming.length,1);assert.equal(f.c.activePlayback.episode,2);
 });
-test('waiting interrupted presentation recovers through current-source progress without playing or canplay',async()=>{
+test('waiting interrupted presentation needs new video frames to recover without playing or canplay',async()=>{
   const f=await prepared();f.handlers.playing();f.paint();f.handlers.waiting();f.paint();await tick();
   assert.equal(f.hero.classList.contains('is-preparing-video'),true);
   f.video.currentTime=.25;f.handlers.timeupdate();await present(f);
+  assert.equal(f.hero.classList.contains('is-preparing-video'),true);assert.equal(f.video.muted,true);
+  f.video.frames++;f.handlers.timeupdate();await present(f);
   assert.equal(f.hero.classList.contains('is-preparing-video'),false);assert.equal(f.video.muted,false);
 });
 test('advancing media can recover a missing playing event without recording the next episode before it starts',async()=>{
@@ -422,12 +424,12 @@ test('pause, background, account changes, source replacement and failure prevent
 test('sound restore interrupted after cover removal is retried after buffering resumes',async()=>{
   const f=await prepared();f.handlers.playing();f.paint();f.paint();await tick();
   f.handlers.waiting();f.video.readyState=2;f.paint();await tick();assert.equal(f.video.muted,true);
-  f.video.currentTime=.25;f.handlers.timeupdate();f.paint();await tick();assert.equal(f.video.muted,false);
+  f.video.currentTime=.25;f.video.frames++;f.handlers.timeupdate();f.paint();await tick();assert.equal(f.video.muted,false);
 });
 test('ordinary playback buffering keeps the picture and does not reenter a transition audio hold',async()=>{
   const f=await prepared();f.handlers.playing();await present(f);f.handlers.waiting();
   assert.equal(f.hero.classList.contains('is-preparing-video'),false);assert.equal(f.video.muted,false);
-  assert.equal(f.c.playbackAudioHold,null);f.video.currentTime=.25;f.handlers.timeupdate();
+  assert.equal(f.c.playbackAudioHold,null);f.video.currentTime=.25;f.video.frames++;f.handlers.timeupdate();
   assert.equal(f.calls.at(-1),'status:');assert.equal(f.video.muted,false);
 });
 test('rebinding quality invalidates old presentation callbacks; paused exit restores user mute safely',async()=>{

@@ -85,3 +85,20 @@ jobs:
           path: android/app/build/outputs/apk/mpv/debug/app-mpv-debug.apk
           if-no-files-found: error
           retention-days: 14
+      - name: Collect isolated JMGO test packages
+        if: github.ref == 'refs/heads/fix/jmgo-n1-ultra-playback'
+        run: |
+          mkdir -p "$RUNNER_TEMP/jmgo-apks"
+          cp android/app/build/outputs/apk/standard/debug/app-standard-debug.apk "$RUNNER_TEMP/jmgo-apks/hongguo-tv-standard-jmgo-test.apk"
+          cp android/app/build/outputs/apk/mpv/debug/app-mpv-debug.apk "$RUNNER_TEMP/jmgo-apks/hongguo-tv-mpv-jmgo-test.apk"
+          cp "$RUNNER_TEMP/hongguo-tv-mpv-library-source-$APP_VERSION.zip" "$RUNNER_TEMP/jmgo-apks/"
+          (cd "$RUNNER_TEMP/jmgo-apks" && sha256sum *.apk *.zip > SHA256SUMS.txt)
+      - name: Upload isolated JMGO test packages
+        if: github.ref == 'refs/heads/fix/jmgo-n1-ultra-playback'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jmgo-n1-ultra-test-apks
+          path: ${{ runner.temp }}/jmgo-apks/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

@@ -124,6 +124,7 @@ public class MainActivity extends Activity {
         webView.addJavascriptInterface(new PlaybackPreferences(this), "HongguoTVPreferences");
         webView.addJavascriptInterface(new InputBridge(), "HongguoTVInput");
         webView.addJavascriptInterface(new HomeChannelBridge(), "HongguoTVHome");
+        webView.addJavascriptInterface(new PlaybackPowerBridge(), "HongguoTVPower");
         appUpdater = new AppUpdater(this, new AppUpdater.Host() {
             public boolean trusted() { return pageReady; }
             public boolean foreground() { return activityForeground; }
@@ -139,6 +140,7 @@ public class MainActivity extends Activity {
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 pageLoadFailed = false;
                 pageReady = false;
+                setPlaybackScreenOn(false);
                 accountEditing = false;
                 searchEditing = false;
                 super.onPageStarted(view, url, favicon);
@@ -517,9 +519,25 @@ public class MainActivity extends Activity {
         exitDialog.show();
     }
 
+    private void setPlaybackScreenOn(boolean requested) {
+        // Covers HTML video, Media3 and MPV equally, including cache waits.
+        // Re-check lifecycle/trust on the UI thread so queued bridge messages
+        // cannot reacquire screen-on after the activity went to the background.
+        boolean keep = requested && pageReady && activityForeground && !destroyed;
+        if (keep) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+
+    private final class PlaybackPowerBridge {
+        @JavascriptInterface public void setActive(boolean active) {
+            runOnUiThread(() -> setPlaybackScreenOn(active));
+        }
+    }
+
     @Override
     protected void onPause() {
         activityForeground = false;
+        setPlaybackScreenOn(false);
         inputBackPending = false;
         routedVerticalKeys = 0;
         completeAccountEditing();
@@ -550,6 +568,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         destroyed = true;
+        setPlaybackScreenOn(false);
         pageReady = false;
         accountEditing = false;
         searchEditing = false;
@@ -572,6 +591,7 @@ public class MainActivity extends Activity {
         }
         if (webView != null) {
             webView.removeJavascriptInterface("HongguoNativePlayer");
+            webView.removeJavascriptInterface("HongguoTVPower");
             webView.stopLoading();
             webView.destroy();
             webView = null;
