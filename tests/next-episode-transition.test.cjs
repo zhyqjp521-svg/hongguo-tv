@@ -7,7 +7,7 @@ const source = fs.readFileSync(require.resolve('../core/cmd/hongguotv/ui/app.js'
 const slice = (a,b) => source.slice(source.indexOf('  function '+a+'('), source.indexOf('  function '+b+'('));
 const tick = () => new Promise(r=>setImmediate(r));
 function deferred(){let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}
-function fixture({failWrite=false,ready=true,engine='standard',sourceGate=null,detailGate=null,captureFailure=false,native=false,prefetchReady=false}={}) {
+function fixture({failWrite=false,ready=true,engine='standard',sourceGate=null,detailGate=null,captureFailure=false,native=false,prefetchReady=false,fade=false}={}) {
   const gate=deferred(), calls=[], resolverURLs=[], writes=[], notices=[], frames=new Map(), handlers={}, timers=[];let frameID=0;
   function classes(...initial){const names=new Set(initial);return {add(...x){x.forEach(n=>names.add(n))},remove(...x){x.forEach(n=>names.delete(n))},contains(n){return names.has(n)},toggle(n,on){if(on)names.add(n);else names.delete(n)},names}}
   const hero={classList:classes('is-feed'),style:{}};
@@ -15,9 +15,10 @@ function fixture({failWrite=false,ready=true,engine='standard',sourceGate=null,d
   const root={classList:classes(...(native?['native-playback']:[]))};
   const bounds={width:1400,height:900};
   const canvas={width:0,height:0,classList:classes(),style:{},parentNode:{getBoundingClientRect:()=>bounds},getContext(){return {drawImage(node){assert.equal(node,video);calls.push('capture');if(captureFailure===true)throw new Error('capture unavailable')},getImageData(){if(captureFailure==='read')throw new Error('tainted canvas');return {data:[12,34,56,255]}}}}};
-  const elem={classList:classes(),style:{}};
+  const elem={classList:classes(),style:{},setAttribute(name,value){this[name]=value}};
+  const fadePanel={classList:classes(),setAttribute(name,value){this[name]=value}},fadeTitle={textContent:''};
   const paint=()=>{const pending=[...frames.values()];frames.clear();pending.forEach(fn=>fn())};
-  const document={hidden:false,documentElement:root,querySelector:()=>video,getElementById:id=>id==='hero-video'?video:id==='hero'?hero:id==='hero-last-frame'?canvas:elem,addEventListener(name,fn){handlers['document:'+name]=fn}};
+  const document={hidden:false,documentElement:root,querySelector:()=>video,getElementById:id=>id==='hero-video'?video:id==='hero'?hero:id==='hero-last-frame'?canvas:id==='episode-transition'?fadePanel:id==='episode-transition-title'?fadeTitle:elem,addEventListener(name,fn){handlers['document:'+name]=fn}};
   const c=vm.createContext({Promise,AbortController,URLSearchParams,Date,Object,Number,Math,clearTimeout,console,
     setTimeout(fn,delay){timers.push({fn,delay});return timers.length},
     requestAnimationFrame(fn){frames.set(++frameID,fn);return frameID},cancelAnimationFrame(id){frames.delete(id)},
@@ -36,6 +37,7 @@ function fixture({failWrite=false,ready=true,engine='standard',sourceGate=null,d
     function playbackEngineName(){return engine==='mpv'?'mpv':engine==='range'?'webview':'webview_media3'}
     var autoCinemaCandidate=false,autoCinemaGeneration=0,autoCinemaSession=null;
     var rangeTransitionTimer=null;
+    var episodeTransition={begin:function(){return Promise.resolve(true)},matches:function(){return false},adopt:function(){},cancel:function(){},hold:function(){}};
     var rangePlaybackEnabled=function(){return engine==='range'||engine==='mpv'};
     var detailModalOpen=false,qualityPrevious=null,applicationInBackground=false;
     var libraryData={owner_id:'123',entries:[]},libraryLoaded=${ready},libraryError='';
@@ -62,7 +64,8 @@ function fixture({failWrite=false,ready=true,engine='standard',sourceGate=null,d
     slice('continueAfterEpisode','offerNextSeasonReservation')+slice('holdPlaybackAudio','renderFeed'),c);
   vm.runInContext('var media=video;'+source.slice(source.indexOf("  media.addEventListener('playing'"),source.indexOf("  document.addEventListener('visibilitychange'")),c);
   vm.runInContext("document.addEventListener('visibilitychange', function () { if (desktopShell) return; if (applicationHidden()) pauseForBackground(); else resumeFromBackground(); });",c);
-  return {c,gate,detailGate,calls,resolverURLs,writes,notices,video,hero,canvas,bounds,root,document,paint,frames,handlers,timers};
+  if(fade)c.episodeTransition=require('../core/cmd/hongguotv/ui/episode-transition.js').create({panel:fadePanel,hero,title:fadeTitle,isCurrent:context=>context.generation===c.feedGeneration&&context.owner===c.accountEpoch&&!c.applicationInBackground,setTimeout:(fn,delay)=>{timers.push({fn,delay});return timers.length},clearTimeout(){}});
+  return {fadePanel,fadeTitle,c,gate,detailGate,calls,resolverURLs,writes,notices,video,hero,canvas,bounds,root,document,paint,frames,handlers,timers};
 }
 function setHidden(f, hidden) {
   f.document.hidden = hidden;
@@ -439,4 +442,29 @@ test('rebinding quality invalidates old presentation callbacks; paused exit rest
   f.handlers.playing();await present(f);assert.equal(f.hero.classList.contains('is-preparing-video'),false);
   f.c.holdPlaybackAudio(f.c.feedGeneration);f.video.paused=true;f.c.releasePlaybackAudio();
   assert.equal(f.video.muted,false);assert.equal(f.video.volume,.75);assert.equal(f.c.playbackAudioHold,null);
+});
+
+test('natural next episode fades through black without exposing a prepared source or releasing audio early',async()=>{
+  const f=fixture({fade:true,prefetchReady:true}),old=f.c.activePlayback;f.gate.resolve();
+  f.video.src='/media/current.mp4';old.completed=true;
+  f.c.continueAfterEpisode(old);await tick();
+  assert.equal(f.fadeTitle.textContent,'loading');assert.equal(f.fadePanel.classList.contains('is-active'),true);
+  assert.equal(f.video.src,'/media/current.mp4');assert.ok(!f.calls.includes('load'));
+  f.timers.find(x=>x.delay===200).fn();await tick();await settlePlayback(f);
+  assert.equal(f.c.activePlayback.episode,2);assert.equal(f.video.src,'/media/prefetched.mp4');
+  assert.equal(f.fadePanel.classList.contains('is-active'),true);assert.equal(f.video.muted,true);
+  f.video.paused=false;f.video.currentTime=0;f.handlers.playing();await present(f);
+  assert.equal(f.fadePanel.classList.contains('is-revealing'),true);assert.equal(f.video.muted,true);
+  f.timers.find(x=>x.delay===280).fn();await tick();await present(f);
+  assert.equal(f.fadePanel.classList.contains('is-active'),false);assert.equal(f.video.muted,false);
+});
+
+test('seeking during a next-episode fade keeps black until the new seek position is ready',async()=>{
+  const f=fixture({fade:true}),old=f.c.activePlayback;f.gate.resolve();old.completed=true;
+  f.c.continueAfterEpisode(old);await tick();f.timers.find(x=>x.delay===200).fn();await tick();await settlePlayback(f);
+  f.video.paused=false;f.video.currentTime=0;f.handlers.playing();await present(f);
+  assert.equal(f.fadePanel.classList.contains('is-revealing'),true);
+  f.video.seeking=true;f.handlers.seeking();
+  assert.equal(f.fadePanel.classList.contains('is-revealing'),false);
+  assert.equal(f.fadePanel.classList.contains('is-active'),true);assert.equal(f.video.muted,true);
 });

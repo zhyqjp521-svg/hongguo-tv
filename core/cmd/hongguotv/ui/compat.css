@@ -197,3 +197,6 @@ html.tv-shell .radar-filter { font-size: 15px; }
 html.tv-shell .radar-table-head { font-size: 14px; }
 html.tv-shell .radar-row { font-size: 16px; }
 html.tv-shell .radar-rank { font-size: 17px; }
+
+.legacy-flex-gap .rank-heading-actions > * + * { margin-left: 18px; }
+.legacy-flex-gap .rank-heading-row .rank-view-switch { margin-left: auto; }

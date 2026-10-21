@@ -482,7 +482,7 @@ button:focus { outline: none; }
 .rank-heading-row, .new-heading-row { display: flex; align-items: center; gap: 34px; margin-bottom: 22px; }
 .rank-heading-row { gap: 24px; }
 .rank-heading-row .rank-view-switch { margin-left: auto; }
-.rank-heading-row .rank-heading-actions { flex: 0 1 auto; min-width: 0; }
+.rank-heading-row > h1, .rank-heading-row .rank-view-switch { flex-shrink: 0; white-space: nowrap; }
 .rank-tabs, .new-tabs { display: flex; align-items: center; gap: 28px; }
 .rank-tab, .new-tab { min-height: 43px; padding: 0 3px; color: #9c9ca8; background: transparent; border-bottom: 3px solid transparent; font-size: 17px; }
 .rank-tab.is-active, .new-tab.is-active { color: #fff; border-color: #f35d7b; }
@@ -918,7 +918,9 @@ html.native-playback .hero-video { display: none !important; }
 .related-card strong, .related-card > span { display: block; overflow: hidden; padding: 7px 9px 0; text-overflow: ellipsis; white-space: nowrap; }
 .related-card > span { padding-top: 4px; color: #bfc0cb; font-size: 13px; }
 .related-card.is-focused, .related-card:focus:not(.pointer-focus-muted) { outline: none; box-shadow: 0 0 0 3px #fff; }
-.rank-heading-actions { display: flex; align-items: center; gap: 12px; }
+.rank-heading-actions { display: flex; align-items: center; gap: 18px; min-width: 0; margin-bottom: 22px; }
+.rank-heading-actions .rank-tabs { flex: 1 1 auto; min-width: 0; overflow-x: auto; padding: 4px; }
+.rank-heading-actions .rank-tab, .rank-filter-open { flex: 0 0 auto; white-space: nowrap; }
 .rank-view-switch { display: flex; align-items: center; gap: 4px; padding: 4px; background: #20212a; border: 1px solid #393b49; border-radius: 10px; }
 .rank-view-tab { min-height: 36px; padding: 0 14px; color: #aaaab6; background: transparent; border-radius: 7px; font-size: 14px; }
 .rank-view-tab.is-active { color: #fff; background: #f35d7b; }
@@ -990,3 +992,13 @@ html.native-playback .hero-video { display: none !important; }
 }
 
 .desktop-update-notes { max-width: 70rem; margin: 1rem 0; white-space: pre-wrap; overflow-wrap: break-word; font: inherit; color: #bfc1ce; line-height: 1.6; }
+
+/* Natural next-episode handoff covers both the WebView and native video surface. */
+.episode-transition { position: absolute; z-index: 5; top: 0; right: 0; bottom: 0; left: 0; display: flex; align-items: center; justify-content: center; color: #fff; background: #000; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .2s ease; }
+.episode-transition.is-active { opacity: 1; visibility: visible; }
+.episode-transition.is-active.is-revealing { opacity: 0; transition-duration: .28s; }
+.episode-transition-copy { display: flex; flex-direction: column; align-items: center; padding: 24px; text-align: center; }
+.episode-transition-copy strong { font-size: 36px; line-height: 1.4; }
+.episode-transition-copy span { margin-top: 12px; color: #c9c9d3; font-size: 18px; }
+.hero.has-episode-fade .player-status.is-loading { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) { .episode-transition, .episode-transition.is-active.is-revealing { transition-duration: .08s; } }

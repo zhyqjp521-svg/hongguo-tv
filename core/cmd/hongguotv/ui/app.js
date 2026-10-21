@@ -374,6 +374,12 @@
   var playbackAudioHold = null;
   var playbackTiming = [];
   var playbackRecovery = HongguoPlaybackRecovery.create({ maxAttempts: 3 });
+  var episodeTransition = HongguoEpisodeTransition.create({
+    panel: document.getElementById('episode-transition'), hero: document.getElementById('hero'),
+    title: document.getElementById('episode-transition-title'),
+    reducedMotion: function () { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); },
+    isCurrent: function (context) { return context.generation === feedGeneration && context.owner === accountEpoch && isPlaybackPage() && !applicationInBackground && !applicationHidden(); }
+  });
   // Bounded, memory-only diagnostics. No drama IDs, titles or account data.
   window.HongguoTVPlaybackTiming = { snapshot: function () { return playbackTiming.map(function (item) { return Object.assign({}, item); }); } };
   var episodePrefetch = HongguoEpisodePrefetch.create({
@@ -2053,6 +2059,7 @@
   function setPlayerStatus(message, failed) {
     var panel = document.getElementById('player-status');
     var hero = document.getElementById('hero');
+    if (failed) episodeTransition.cancel();
     if (failed && autoCinemaCandidate) cancelPendingAutoCinema();
     if (failed && activePlayback && activePlayback.presentation) activePlayback.presentation.failed = true;
     var preparing = hero.classList.contains('is-preparing-video') || activePlayback && (activePlayback.continuationPending || !activePlayback.started);
@@ -3739,8 +3746,10 @@
     getDetail(playback.item).then(function (detail) {
       if (!canContinuePlayback(playback)) { deferContinuation(playback); return; }
       if (detail.vid_list && detail.vid_list[playback.episode]) {
-        playFeedItem(feedIndex, playback.episode + 1, 0, playback);
-        return;
+        return episodeTransition.begin(playback, episodeLoadingText(playback.episode + 1)).then(function (covered) {
+          if (!covered || !canContinuePlayback(playback)) { deferContinuation(playback); return; }
+          playFeedItem(feedIndex, playback.episode + 1, 0, playback);
+        });
       }
       // Missing/incomplete episode data must not be mistaken for season end.
       if (!detail.vid_list || !detail.vid_list.length || playback.episode < Math.max(detail.episode_count || 0, detail.vid_list.length)) {
@@ -3878,7 +3887,8 @@
     }).catch(function () { if (detailModalOpen && generation === detailGeneration) showNotice(uiText('content.nextSeasonReadFailed', '下一季选集暂时读取失败，可关闭后重试')); });
   }
 
-  function cancelPlaybackPreparation() {
+  function cancelPlaybackPreparation(preserveEpisodeTransition) {
+    if (!preserveEpisodeTransition) episodeTransition.cancel();
     clearRangeTransitionHint();
     clearRangeStallTimer();
     clearEpisodeCover();
@@ -4161,6 +4171,13 @@
       video.videoWidth > 0 && video.videoHeight > 0);
   }
   function releasePresentedAudio(playback, presentation, video) {
+    if (episodeTransition.matches(playback)) {
+      if (!playbackVideoReady(playback, presentation, video)) return;
+      episodeTransition.reveal(playback).then(function (revealed) {
+        if (revealed) releasePresentedAudio(playback, presentation, video);
+      });
+      return;
+    }
     if (!playbackAudioHold || presentation.audioPending || !playbackVideoReady(playback, presentation, video)) return;
     presentation.audioPending = true;
     var epoch = presentation.epoch;
@@ -4382,7 +4399,8 @@
     var fastContinuation = !!(continuation && continuation.completed && canContinuePlayback(continuation) &&
       continuation.owner === accountEpoch && continuation.item.series_id === item.series_id &&
       forcedEpisode === continuation.episode + 1 && forcedPosition === 0 && libraryLoaded);
-    cancelPlaybackPreparation();
+    var continuingFade = !!(continuation && episodeTransition.matches(continuation));
+    cancelPlaybackPreparation(continuingFade);
     var request = new AbortController();
     playbackInfoRequest = request;
     var playbackMode = (typeof rangePlaybackEnabled === 'function' && rangePlaybackEnabled()) ? 'range' : '';
@@ -4402,6 +4420,7 @@
     var keepRangeFrame = sameSeries && playbackMode === 'range' && !!video.getAttribute('src');
     if (keepRangeFrame) captureLastPlaybackFrame(item); else clearLastPlaybackFrame();
     var generation = ++feedGeneration;
+    if (continuingFade) episodeTransition.adopt({ generation: generation, owner: accountEpoch });
     if (autoCinemaCandidate && autoCinemaGeneration && generation !== autoCinemaGeneration) cancelPendingAutoCinema();
     holdPlaybackAudio(generation);
     clearTimeout(controlsTimer);
@@ -7068,6 +7087,7 @@
     saveProgress(false);
   });
   media.addEventListener('pause', function () {
+    episodeTransition.hold(activePlayback);
     if (activePlayback) activePlayback.stableSince = 0;
     interruptPlaybackPresentation(activePlayback);
     document.getElementById('danmaku-layer').classList.add('is-paused');
@@ -7079,6 +7099,7 @@
   media.addEventListener('emptied', updatePlaybackControls);
   media.addEventListener('waiting', function () {
     if (!activePlayback) return;
+    episodeTransition.hold(activePlayback);
     activePlayback.stableSince = 0;
     interruptPlaybackPresentation(activePlayback);
     if (activePlayback.presentation) {
@@ -7096,6 +7117,7 @@
   });
   media.addEventListener('stalled', function () { if (activePlayback && activePlayback.mode === 'range') scheduleRangeStallFallback(activePlayback); });
   media.addEventListener('seeking', function () {
+    episodeTransition.hold(activePlayback);
     if (activePlayback) {
       activePlayback.stableSince = 0;
       if (activePlayback.presentation) {
