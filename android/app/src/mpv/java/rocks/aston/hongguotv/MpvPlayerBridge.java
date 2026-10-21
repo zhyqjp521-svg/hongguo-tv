@@ -53,7 +53,7 @@ public final class MpvPlayerBridge implements NativePlayerAdapter, SurfaceHolder
         final MpvDecodeMode mode;
         final MpvOutputState output = new MpvOutputState();
         MPVLib player;
-        boolean outputReady, wantsPlay, terminal, pendingSeek;
+        boolean outputReady, wantsPlay, terminal, pendingSeek, buffering;
         long position, duration;
         long loadRequestedAt, fileLoadedAt, outputReadyAt;
         String decoder = "", state = "preparing";
@@ -157,6 +157,7 @@ public final class MpvPlayerBridge implements NativePlayerAdapter, SurfaceHolder
         holder.setVisibility(View.VISIBLE);
         holder.setAlpha(1f);
         armTimeout(target);
+        target.buffering = true;
         event(target, "buffering", null);
         start(target);
     }
@@ -279,10 +280,14 @@ public final class MpvPlayerBridge implements NativePlayerAdapter, SurfaceHolder
                     post(target -> {
                         if ("eof-reached".equals(name) && value && target.outputReady) finish(target);
                         else if ("vo-configured".equals(name)) { target.output.configured = value; rendered(target); }
-                        else if ("paused-for-cache".equals(name) && target.outputReady && target.wantsPlay && !background)
-                            MpvPlayerBridge.this.event(target, value ? "buffering" : "playing", null);
-                        else if ("pause".equals(name) && target.outputReady && !background)
-                            MpvPlayerBridge.this.event(target, value ? "paused" : "playing", null);
+                        else if ("paused-for-cache".equals(name)) {
+                            target.buffering = value;
+                            if (target.outputReady && target.wantsPlay && !background)
+                                MpvPlayerBridge.this.event(target, value ? "buffering" : "playing", null);
+                        } else if ("pause".equals(name) && target.outputReady && !background) {
+                            String state = value ? "paused" : target.buffering ? null : "playing";
+                            if (state != null) MpvPlayerBridge.this.event(target, state, null);
+                        }
                     });
                 }
                 @Override public void event(int value) {
@@ -294,7 +299,7 @@ public final class MpvPlayerBridge implements NativePlayerAdapter, SurfaceHolder
                             applyPlayState(target);
                             updateDiagnostic(target, null);
                         } else if (value == MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART) {
-                            target.output.restarted = true; rendered(target);
+                            target.output.restarted = true; target.buffering = false; rendered(target);
                         }
                     });
                 }
@@ -349,7 +354,9 @@ public final class MpvPlayerBridge implements NativePlayerAdapter, SurfaceHolder
             // libmpv has no physical first-frame callback; report that honestly.
             event(target, "frame", detail);
         }
-        if (!background) event(target, target.wantsPlay ? "playing" : "paused", null);
+        Boolean paused = player.getPropertyBoolean("pause");
+        if (!background && !target.wantsPlay) event(target, "paused", null);
+        else if (!background && !target.buffering && !Boolean.TRUE.equals(paused)) event(target, "playing", null);
     }
     private void finish(Session target) {
         if (!current(target)) return;
@@ -560,6 +567,7 @@ public final class MpvPlayerBridge implements NativePlayerAdapter, SurfaceHolder
             dispose(s); s.output.loaded = false; s.outputReady = false;
             s.output.restarted = false; s.output.configured = false; s.output.vo = "";
             s.output.surfaceWidth = 0; s.output.surfaceHeight = 0;
+            s.buffering = true;
             event(s, "buffering", null);
         });
         else if (action == MpvSurfaceLifecyclePolicy.Action.RETIRE_ORPHAN) {

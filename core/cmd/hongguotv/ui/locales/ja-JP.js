@@ -648,7 +648,6 @@
   "ui.loadingDrama": "読み込み中ドラマ…",
   "ui.readingVersion": "読み込み中…",
   "ui.buffering": "バッファリング中…",
-    "ui.nextEpisodePreparing": "次のエピソードを準備中…",
   "ui.episodePlaceholder": "第1集",
   "ui.closeRelated": "閉じる関連おすすめ",
   "ui.updateStateDefault": "してください更新アプリ後再試行",

@@ -146,7 +146,7 @@ test('Back and native requestBack close the sheet before fullscreen or player na
 
 async function completion({mode='player',episode=2,successor=null,relatedRows=related,incomplete=false,late=false,followPrompt=false}={}){
   const calls=[],playback={item:{series_id:'self',episode_count:2},episode,owner:1,generation:1,completed:true,started:true};
-  const c=vm.createContext({episodeTransition:{begin:()=>Promise.resolve(true)},Promise,Object,Array,encodeURIComponent,activePlayback:playback,feedGeneration:1,accountEpoch:1,
+  const c=vm.createContext({Promise,Object,Array,encodeURIComponent,activePlayback:playback,feedGeneration:1,accountEpoch:1,
     continuationGeneration:0,applicationInBackground:false,seasonSwitchRequest:null,confirmAfterClose:null,feedItems:[playback.item,{}],feedIndex:0,
     isPlaybackPage:()=>true,pageMode:()=>mode,applicationHidden:()=>false,
     getDetail:async()=>{if(late)c.activePlayback=null;return {vid_list:incomplete?['111']:['111','222'],episode_count:incomplete?8:2,related:relatedRows}},

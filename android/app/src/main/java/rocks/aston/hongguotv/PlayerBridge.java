@@ -248,7 +248,7 @@ final class PlayerBridge implements NativePlayerAdapter {
                 if(!current())return;
                 Session current=session;
                 if(state==Player.STATE_BUFFERING){current.clock.reset();event(current,"buffering");}
-                if(state==Player.STATE_READY&&current.firstFrame)event(current,current.wantsPlay?"playing":"paused");
+                if(state==Player.STATE_READY&&current.firstFrame){if(!current.wantsPlay)event(current,"paused");else if(active.isPlaying())event(current,"playing");}
                 if(state==Player.STATE_ENDED){event(current,"ended");markInactive();}
             }
             @Override public void onIsPlayingChanged(boolean playing){Session current=session;if(current()){if(!playing)current.clock.reset();else if(current.firstFrame)event(current,"playing");}}
@@ -337,7 +337,7 @@ final class PlayerBridge implements NativePlayerAdapter {
         final float value=(float)Math.max(0,Math.min(1,volume));
         handler.post(()->{requestedVolume=value;requestedMuted=muted;if(player!=null)player.setVolume(muted?0:value);});
     }
-    @JavascriptInterface public void resume(){handler.post(()->{if(session!=null){session.wantsPlay=true;if(player!=null&&!background)player.play();if(session.firstFrame)event(session,"playing");}});}
+    @JavascriptInterface public void resume(){handler.post(()->{if(session!=null){session.wantsPlay=true;if(player!=null&&!background)player.play();if(session.firstFrame&&player!=null&&player.isPlaying())event(session,"playing");}});}
     @JavascriptInterface public void seekBy(int seconds){handler.post(()->{if(player!=null&&session!=null&&!session.live&&session.firstFrame){long duration=player.getDuration();long position=player.getCurrentPosition()+Math.max(-60,Math.min(60,seconds))*1000L;player.seekTo(Math.max(0,duration>0?Math.min(duration,position):position));}});}
     @JavascriptInterface public void seekTo(double seconds){if(Double.isNaN(seconds)||Double.isInfinite(seconds)||seconds<0)return;handler.post(()->{if(player!=null&&session!=null&&!session.live&&session.firstFrame){long duration=player.getDuration();if(duration>0)player.seekTo((long)Math.min(duration,seconds*1000));}});}
     @JavascriptInterface public void bounds(float l,float t,float w,float h){handler.post(()->{

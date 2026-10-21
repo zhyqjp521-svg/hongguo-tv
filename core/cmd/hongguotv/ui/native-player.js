@@ -29,7 +29,8 @@
   var sequence = 0;
   var loadId = 'hongguo-' + (++sequence);
   var state = { source: '', currentTime: 0, startPosition: 0, duration: NaN, paused: true, ended: false, seeking: false,
-    readyState: 0, videoWidth: 0, videoHeight: 0, seekPending: false, playbackRate: 1, volume: 1, muted: true, started: false };
+    readyState: 0, videoWidth: 0, videoHeight: 0, seekPending: false, seekTarget: 0,
+    playbackRate: 1, volume: 1, muted: true, started: false };
   if (fixedNative) { usingNative = true; document.documentElement.classList.add('native-playback'); }
 
   function isNative() { return nativeEnabled && usingNative; }
@@ -93,7 +94,7 @@
     state.volume = Number(domVideo.volume);
     state.muted = !!domVideo.muted;
     state.ended = false; state.seeking = false; state.readyState = 0;
-    state.videoWidth = 0; state.videoHeight = 0; state.seekPending = false; state.started = false;
+    state.videoWidth = 0; state.videoHeight = 0; state.seekPending = false; state.seekTarget = 0; state.started = false;
     try { domVideo.pause(); } catch (ignoredPause) {}
     usingNative = true;
     document.documentElement.classList.add('native-playback');
@@ -120,7 +121,8 @@
     try {
       state.source = source;
       state.currentTime = position; state.duration = NaN; state.readyState = 0;
-      state.videoWidth = 0; state.videoHeight = 0; state.ended = false; state.seeking = false; state.started = false;
+      state.videoWidth = 0; state.videoHeight = 0; state.ended = false; state.seeking = false;
+      state.seekPending = false; state.seekTarget = 0; state.started = false;
       domVideo.src = source;
       domVideo.playbackRate = state.playbackRate;
       domVideo.volume = state.volume;
@@ -144,7 +146,7 @@
     state.source = next;
     state.currentTime = 0; state.startPosition = 0; state.duration = NaN; state.paused = true; state.ended = false;
     state.seeking = false; state.readyState = 0; state.videoWidth = 0; state.videoHeight = 0;
-    state.seekPending = false; state.started = false;
+    state.seekPending = false; state.seekTarget = 0; state.started = false;
     // The MPV edition never loads media into WebView, including between episodes.
     if (!fixedNative) domVideo.src = next;
     else {
@@ -176,7 +178,8 @@
       nativeRequested = false;
       proxy.error = null;
       state.currentTime = state.startPosition; state.duration = NaN; state.paused = true; state.ended = false; state.seeking = false;
-      state.readyState = 0; state.videoWidth = 0; state.videoHeight = 0; state.seekPending = false; state.started = false;
+      state.readyState = 0; state.videoWidth = 0; state.videoHeight = 0;
+      state.seekPending = false; state.seekTarget = 0; state.started = false;
       try { bridge.begin(loadId); } catch (ignored) {}
       dispatch('emptied');
     },
@@ -216,7 +219,7 @@
       if (next !== state.source) { resetToDomSource(next); return; }
       state.source = next; proxy.networkState = state.source ? 2 : 0; if (!state.source) setClass('has-source', false);
     } },
-    currentTime: { get: function () { return isNative() ? state.currentTime : domVideo.currentTime; }, set: function (value) { if (!isNative()) { domVideo.currentTime = value; return; } var next = Number(value); if (!isFinite(next)) return; state.seeking = true; state.seekPending = true; state.currentTime = Math.max(0, next); dispatch('seeking'); if (bridge.seekTo) try { bridge.seekTo(state.currentTime); } catch (ignored) {} } },
+    currentTime: { get: function () { return isNative() ? state.currentTime : domVideo.currentTime; }, set: function (value) { if (!isNative()) { domVideo.currentTime = value; return; } var next = Number(value); if (!isFinite(next)) return; state.seeking = true; state.seekPending = true; state.currentTime = Math.max(0, next); state.seekTarget = state.currentTime; dispatch('seeking'); if (bridge.seekTo) try { bridge.seekTo(state.currentTime); } catch (ignored) {} } },
     duration: { get: function () { return isNative() ? state.duration : domVideo.duration; } },
     paused: { get: function () { return isNative() ? state.paused : domVideo.paused; } },
     ended: { get: function () { return isNative() ? state.ended : domVideo.ended; } },
@@ -234,7 +237,7 @@
     event: function (id, name, detail) {
       if (!isNative() || id !== loadId) return;
       detail = detail || {};
-      if (name === 'buffering' || name === 'waiting') { state.readyState = 1; state.seeking = false; dispatch('waiting', detail); return; }
+      if (name === 'buffering' || name === 'waiting') { state.readyState = 1; state.seeking = state.seekPending; dispatch('waiting', detail); return; }
       if (name === 'frame') {
         state.readyState = 3; state.videoWidth = Number(detail.width) || 0; state.videoHeight = Number(detail.height) || 0;
         // Keep the rendered-frame signal separate from `playing`. Some
@@ -244,12 +247,13 @@
         dispatch('nativeframe', { type: 'nativeframe', nativeFrame: true, width: state.videoWidth, height: state.videoHeight });
         dispatch('loadedmetadata'); dispatch('loadeddata'); dispatch('canplay'); return;
       }
-      if (name === 'playing') { state.started = true; state.paused = false; state.ended = false; state.seeking = false; state.readyState = Math.max(3, state.readyState); dispatch('playing', detail); return; }
+      if (name === 'playing') { state.started = true; state.paused = false; state.ended = false; state.seeking = state.seekPending; state.readyState = Math.max(3, state.readyState); dispatch('playing', detail); return; }
       if (name === 'paused') { state.paused = true; dispatch('pause', detail); return; }
-      if (name === 'ended') { state.ended = true; state.paused = true; state.seeking = false; dispatch('ended', detail); return; }
+      if (name === 'ended') { state.ended = true; state.paused = true; state.seeking = false; state.seekPending = false; state.seekTarget = 0; dispatch('ended', detail); return; }
       if (name === 'error') {
         if (fixedNative) {
-          state.paused = true; state.started = false; state.readyState = 0;
+          state.paused = true; state.started = false; state.readyState = 0; state.seeking = false;
+          state.seekPending = false; state.seekTarget = 0;
           nativeRequested = false;
           loadId = 'hongguo-' + (++sequence);
           proxy.error = { code: 3, message: detail.kind || t('content.mpvFailed', 'MPV 播放失败') };
@@ -267,7 +271,10 @@
       state.currentTime = isFinite(positionMs) && positionMs >= 0 ? positionMs / 1000 : 0;
       state.duration = isFinite(durationMs) && durationMs > 0 ? durationMs / 1000 : NaN;
       if (isFinite(state.duration) && state.currentTime > state.duration) state.currentTime = state.duration;
-      if (state.seekPending) { state.seekPending = false; state.seeking = false; dispatch('seeked'); } else state.seeking = false; dispatch('timeupdate');
+      if (state.seekPending && Math.abs(state.currentTime - state.seekTarget) <= 2) {
+        state.seekPending = false; state.seeking = false; dispatch('seeked');
+      } else state.seeking = state.seekPending;
+      dispatch('timeupdate');
     }
   };
   ['loadedmetadata', 'loadeddata', 'canplay', 'playing', 'pause', 'ended', 'timeupdate', 'waiting', 'seeking', 'seeked', 'ratechange', 'volumechange', 'emptied', 'error'].forEach(function (name) {

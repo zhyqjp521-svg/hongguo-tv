@@ -678,7 +678,6 @@ button:focus { outline: none; }
   .rank-row { grid-template-columns: 34px 98px minmax(0,1fr) 82px; gap: 12px; }
   .rank-row-image { width: 98px; height: 132px; }
 }
-
 @media (max-width: 1080px) {
   .search-page { padding-left: 22px; padding-right: 22px; }
   .search-heading-row { display: block; }
@@ -992,13 +991,3 @@ html.native-playback .hero-video { display: none !important; }
 }
 
 .desktop-update-notes { max-width: 70rem; margin: 1rem 0; white-space: pre-wrap; overflow-wrap: break-word; font: inherit; color: #bfc1ce; line-height: 1.6; }
-
-/* Natural next-episode handoff covers both the WebView and native video surface. */
-.episode-transition { position: absolute; z-index: 5; top: 0; right: 0; bottom: 0; left: 0; display: flex; align-items: center; justify-content: center; color: #fff; background: #000; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .2s ease; }
-.episode-transition.is-active { opacity: 1; visibility: visible; }
-.episode-transition.is-active.is-revealing { opacity: 0; transition-duration: .28s; }
-.episode-transition-copy { display: flex; flex-direction: column; align-items: center; padding: 24px; text-align: center; }
-.episode-transition-copy strong { font-size: 36px; line-height: 1.4; }
-.episode-transition-copy span { margin-top: 12px; color: #c9c9d3; font-size: 18px; }
-.hero.has-episode-fade .player-status.is-loading { visibility: hidden; }
-@media (prefers-reduced-motion: reduce) { .episode-transition, .episode-transition.is-active.is-revealing { transition-duration: .08s; } }

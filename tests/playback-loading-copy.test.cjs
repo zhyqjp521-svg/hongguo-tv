@@ -12,7 +12,7 @@ function fixture(options) {
   panel.querySelector=selector=>{assert.equal(selector,'.player-spinner');return spinner};
   const nodes={'hero':hero,'player-status':panel,'player-status-title':title,'player-status-text':text,'player-retry':retry,'player-failure-diagnostics':diagnostics};
   const frames=[];
-  const context={episodeTransition:{cancel(){}},document:{getElementById:id=>nodes[id]},activePlayback:null,autoCinemaCandidate:false,featuredItem:{title:'新剧名称'},reveals:0,focused:null,coverClears:0,zoneOf:()=> 'feed'};
+  const context={document:{getElementById:id=>nodes[id]},activePlayback:null,autoCinemaCandidate:false,featuredItem:{title:'新剧名称'},reveals:0,focused:null,coverClears:0,zoneOf:()=> 'feed'};
   if(options&&options.frameScheduler)context.requestAnimationFrame=callback=>{frames.push(callback)};
   const c=vm.createContext(context);
   vm.runInContext('function clearLastPlaybackFrame(){}function clearEpisodeCover(){coverClears++}function cancelPendingAutoCinema(){autoCinemaCandidate=false}function revealControls(){reveals++}function goFocus(node){focused=node}'+functions,c);

@@ -374,12 +374,6 @@
   var playbackAudioHold = null;
   var playbackTiming = [];
   var playbackRecovery = HongguoPlaybackRecovery.create({ maxAttempts: 3 });
-  var episodeTransition = HongguoEpisodeTransition.create({
-    panel: document.getElementById('episode-transition'), hero: document.getElementById('hero'),
-    title: document.getElementById('episode-transition-title'),
-    reducedMotion: function () { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); },
-    isCurrent: function (context) { return context.generation === feedGeneration && context.owner === accountEpoch && isPlaybackPage() && !applicationInBackground && !applicationHidden(); }
-  });
   // Bounded, memory-only diagnostics. No drama IDs, titles or account data.
   window.HongguoTVPlaybackTiming = { snapshot: function () { return playbackTiming.map(function (item) { return Object.assign({}, item); }); } };
   var episodePrefetch = HongguoEpisodePrefetch.create({
@@ -2059,7 +2053,6 @@
   function setPlayerStatus(message, failed) {
     var panel = document.getElementById('player-status');
     var hero = document.getElementById('hero');
-    if (failed) episodeTransition.cancel();
     if (failed && autoCinemaCandidate) cancelPendingAutoCinema();
     if (failed && activePlayback && activePlayback.presentation) activePlayback.presentation.failed = true;
     var preparing = hero.classList.contains('is-preparing-video') || activePlayback && (activePlayback.continuationPending || !activePlayback.started);
@@ -2471,6 +2464,10 @@
   function seekTo(position, reveal) {
     var video = document.getElementById('hero-video');
     if (!activePlayback || !Number.isFinite(position) || !Number.isFinite(video.duration) || video.duration <= 0) return false;
+    if (activePlayback.presentation && activePlayback.presentation.resyncing) {
+      activePlayback.presentation.resyncing = false;
+      activePlayback.presentation.resyncTarget = null;
+    }
     video.currentTime = Math.max(0, Math.min(position, Math.max(0, video.duration - .25)));
     updatePlaybackControls(); if (reveal !== false) revealControls();
     showNotice(uiText('ui.seekPosition', '定位到 {time}', { time: clockText(video.currentTime) }));
@@ -3746,10 +3743,8 @@
     getDetail(playback.item).then(function (detail) {
       if (!canContinuePlayback(playback)) { deferContinuation(playback); return; }
       if (detail.vid_list && detail.vid_list[playback.episode]) {
-        return episodeTransition.begin(playback, episodeLoadingText(playback.episode + 1)).then(function (covered) {
-          if (!covered || !canContinuePlayback(playback)) { deferContinuation(playback); return; }
-          playFeedItem(feedIndex, playback.episode + 1, 0, playback);
-        });
+        playFeedItem(feedIndex, playback.episode + 1, 0, playback);
+        return;
       }
       // Missing/incomplete episode data must not be mistaken for season end.
       if (!detail.vid_list || !detail.vid_list.length || playback.episode < Math.max(detail.episode_count || 0, detail.vid_list.length)) {
@@ -3887,8 +3882,7 @@
     }).catch(function () { if (detailModalOpen && generation === detailGeneration) showNotice(uiText('content.nextSeasonReadFailed', '下一季选集暂时读取失败，可关闭后重试')); });
   }
 
-  function cancelPlaybackPreparation(preserveEpisodeTransition) {
-    if (!preserveEpisodeTransition) episodeTransition.cancel();
+  function cancelPlaybackPreparation() {
     clearRangeTransitionHint();
     clearRangeStallTimer();
     clearEpisodeCover();
@@ -4146,7 +4140,7 @@
   }
   function bindPlaybackPresentation(playback, source) {
     playback.presentation = { source: source, position: Number(playback.position) || 0, epoch: 0, pending: false, waiting: false,
-      rendered: false, frame_at: 0, failed: false, lastAdvanceAt: Date.now(), bufferingSince: null, frames: readPlaybackFrames(document.getElementById('hero-video')) };
+      resyncing: false, resyncTarget: null, rendered: false, frame_at: 0, failed: false, lastAdvanceAt: Date.now(), bufferingSince: null, frames: readPlaybackFrames(document.getElementById('hero-video')) };
   }
   function interruptPlaybackPresentation(playback) {
     if (!playback || !playback.presentation) return;
@@ -4171,13 +4165,6 @@
       video.videoWidth > 0 && video.videoHeight > 0);
   }
   function releasePresentedAudio(playback, presentation, video) {
-    if (episodeTransition.matches(playback)) {
-      if (!playbackVideoReady(playback, presentation, video)) return;
-      episodeTransition.reveal(playback).then(function (revealed) {
-        if (revealed) releasePresentedAudio(playback, presentation, video);
-      });
-      return;
-    }
     if (!playbackAudioHold || presentation.audioPending || !playbackVideoReady(playback, presentation, video)) return;
     presentation.audioPending = true;
     var epoch = presentation.epoch;
@@ -4252,13 +4239,17 @@
     if (presentation.waiting && Number(video.currentTime) > presentation.position + 2) {
       // A real playing callback, not a moving clock, ends a buffer. Rewind
       // drift before the next progress save or visible timeline update.
-      presentation.waiting = false; presentation.bufferingSince = null; presentation.lastAdvanceAt = Date.now();
-      video.currentTime = presentation.position;
+      if (presentation.resyncing) return;
+      presentation.resyncing = true;
+      presentation.resyncTarget = presentation.position;
+      presentation.bufferingSince = Date.now(); presentation.lastAdvanceAt = Date.now();
+      video.currentTime = presentation.resyncTarget;
       resetDanmaku();
       return;
     }
     clearRangeStallTimer();
-    presentation.waiting = false; presentation.bufferingSince = null; presentation.lastAdvanceAt = Date.now();
+    presentation.waiting = false; presentation.resyncing = false; presentation.resyncTarget = null;
+    presentation.bufferingSince = null; presentation.lastAdvanceAt = Date.now();
     presentation.position = Math.max(0, Number(video.currentTime) || 0);
     playback.started = true;
     playback.stableSince = Date.now();
@@ -4312,6 +4303,19 @@
       if (!document.getElementById('hero').classList.contains('is-preparing-video')) setPlayerStatus('');
     }
     finishPlaybackPreparation(playback);
+  }
+  function recordPlaybackSeek(playback, video, completed) {
+    var presentation = playback && playback.presentation;
+    if (!presentation) return false;
+    var position = Math.max(0, Number(video.currentTime) || 0);
+    if (!presentation.resyncing) {
+      presentation.position = position;
+      return false;
+    }
+    var target = Number(presentation.resyncTarget);
+    if (!completed || !Number.isFinite(target) || Math.abs(position - target) > 2) return false;
+    presentation.position = Math.max(0, target);
+    return true;
   }
   function readPlaybackFrames(video) {
     try {
@@ -4399,8 +4403,7 @@
     var fastContinuation = !!(continuation && continuation.completed && canContinuePlayback(continuation) &&
       continuation.owner === accountEpoch && continuation.item.series_id === item.series_id &&
       forcedEpisode === continuation.episode + 1 && forcedPosition === 0 && libraryLoaded);
-    var continuingFade = !!(continuation && episodeTransition.matches(continuation));
-    cancelPlaybackPreparation(continuingFade);
+    cancelPlaybackPreparation();
     var request = new AbortController();
     playbackInfoRequest = request;
     var playbackMode = (typeof rangePlaybackEnabled === 'function' && rangePlaybackEnabled()) ? 'range' : '';
@@ -4420,7 +4423,6 @@
     var keepRangeFrame = sameSeries && playbackMode === 'range' && !!video.getAttribute('src');
     if (keepRangeFrame) captureLastPlaybackFrame(item); else clearLastPlaybackFrame();
     var generation = ++feedGeneration;
-    if (continuingFade) episodeTransition.adopt({ generation: generation, owner: accountEpoch });
     if (autoCinemaCandidate && autoCinemaGeneration && generation !== autoCinemaGeneration) cancelPendingAutoCinema();
     holdPlaybackAudio(generation);
     clearTimeout(controlsTimer);
@@ -7087,7 +7089,6 @@
     saveProgress(false);
   });
   media.addEventListener('pause', function () {
-    episodeTransition.hold(activePlayback);
     if (activePlayback) activePlayback.stableSince = 0;
     interruptPlaybackPresentation(activePlayback);
     document.getElementById('danmaku-layer').classList.add('is-paused');
@@ -7099,7 +7100,6 @@
   media.addEventListener('emptied', updatePlaybackControls);
   media.addEventListener('waiting', function () {
     if (!activePlayback) return;
-    episodeTransition.hold(activePlayback);
     activePlayback.stableSince = 0;
     interruptPlaybackPresentation(activePlayback);
     if (activePlayback.presentation) {
@@ -7117,11 +7117,10 @@
   });
   media.addEventListener('stalled', function () { if (activePlayback && activePlayback.mode === 'range') scheduleRangeStallFallback(activePlayback); });
   media.addEventListener('seeking', function () {
-    episodeTransition.hold(activePlayback);
     if (activePlayback) {
       activePlayback.stableSince = 0;
       if (activePlayback.presentation) {
-        activePlayback.presentation.position = Math.max(0, Number(media.currentTime) || 0);
+        recordPlaybackSeek(activePlayback, media, false);
         activePlayback.presentation.lastAdvanceAt = Date.now();
         activePlayback.presentation.bufferingSince = null;
       }
@@ -7130,8 +7129,9 @@
   });
   media.addEventListener('seeked', function () {
     if (activePlayback && activePlayback.started && !media.paused && !media.ended) activePlayback.stableSince = Date.now();
-    if (activePlayback && activePlayback.presentation) activePlayback.presentation.position = Number(media.currentTime) || 0;
+    var resyncReached = recordPlaybackSeek(activePlayback, media, true);
     checkPlaybackData(); resetDanmaku(); tickDanmaku(); updatePlaybackControls(); saveProgress(true);
+    if (resyncReached && activePlayback && !media.paused && !media.ended && !media.seeking && media.readyState >= 2) markPlaybackStarted(activePlayback);
     if (media.paused) setPlayerStatus('');
   });
   media.addEventListener('error', function () {

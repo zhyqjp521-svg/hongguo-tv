@@ -148,6 +148,26 @@ test('native playback clamps a position that exceeds the reported duration', () 
   assert.equal(proxy.duration, 188);
 });
 
+test('native playback does not acknowledge a seek with one last drifting progress sample', () => {
+  const f = fixture();
+  const proxy = f.document.getElementById('hero-video');
+  const id = activateNative(f);
+  let seeked = 0;
+  proxy.addEventListener('seeked', () => seeked++);
+  f.context.window.HongguoNativePlayback.progress(id, 40000, 120000);
+  proxy.currentTime = 30;
+  assert.equal(proxy.seeking, true);
+  f.context.window.HongguoNativePlayback.progress(id, 40000, 120000);
+  assert.equal(proxy.seeking, true);
+  assert.equal(seeked, 0);
+  f.context.window.HongguoNativePlayback.event(id, 'playing');
+  assert.equal(proxy.seeking, true);
+  assert.equal(seeked, 0);
+  f.context.window.HongguoNativePlayback.progress(id, 31000, 120000);
+  assert.equal(proxy.seeking, false);
+  assert.equal(seeked, 1);
+});
+
 test('MPV edition sends sources only to MPV and resumes without recreating before first frame', async () => {
   const f = fixture('mpv'), video = f.document.getElementById('hero-video');
   video.src = '/media/test.mp4'; video.load(); video.currentTime = 12.5;
@@ -293,4 +313,19 @@ test('Media3 callback after returning to WebView cannot emit a stale ended or pr
   f.context.window.HongguoNativePlayback.event(id, 'ended');
   f.context.window.HongguoNativePlayback.progress(id, 30000, 90000);
   assert.equal(ends, 0); assert.equal(ticks, 0); video.pause();
+});
+
+test('native bridges only report playing after cache playback really resumes', () => {
+  const mediaReady = fs.readFileSync(require.resolve('../android/app/src/main/java/rocks/aston/hongguotv/PlayerBridge.java'), 'utf8');
+  assert.match(mediaReady, /STATE_READY&&current\.firstFrame\)\{if\(!current\.wantsPlay\)event\(current,"paused"\);else if\(active\.isPlaying\(\)\)event\(current,"playing"\);\}/);
+  assert.doesNotMatch(mediaReady, /STATE_READY&&current\.firstFrame\)event\(current,current\.wantsPlay\?"playing":"paused"\)/);
+  assert.match(mediaReady, /public void resume\(\)[\s\S]*player\.play\(\);if\(session\.firstFrame&&player!=null&&player\.isPlaying\(\)\)event\(session,"playing"\)/);
+  assert.doesNotMatch(mediaReady, /player\.play\(\);if\(session\.firstFrame\)event\(session,"playing"\)/);
+
+  assert.match(mpvBridgeSource, /boolean outputReady, wantsPlay, terminal, pendingSeek, buffering;/);
+  assert.match(mpvBridgeSource, /"paused-for-cache"\.equals\(name\)[\s\S]*target\.buffering = value;[\s\S]*value \? "buffering" : "playing"/);
+  assert.match(mpvBridgeSource, /"pause"\.equals\(name\)[\s\S]*value \? "paused" : target\.buffering \? null : "playing"/);
+  assert.match(mpvBridgeSource, /MPV_EVENT_PLAYBACK_RESTART[\s\S]*target\.buffering = false;[\s\S]*rendered\(target\)/);
+  const surfaceReset = mpvBridgeSource.slice(mpvBridgeSource.indexOf('@Override public void surfaceDestroyed'), mpvBridgeSource.indexOf('private void dispose('));
+  assert.match(surfaceReset, /dispose\(s\);[\s\S]*s\.buffering = true;[\s\S]*event\(s, "buffering", null\)/);
 });

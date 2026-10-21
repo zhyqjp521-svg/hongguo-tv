@@ -14,6 +14,7 @@ function load(context, name, next) {
 function fixture() {
   let now = 1000;
   const video = {currentTime: 40, duration: 120, readyState: 4, paused: false, ended: false, seeking: false,
+    classList: {contains: () => false},
     getAttribute: () => '/media/current', pause() { this.paused = true; }};
   const playback = {started: true, episode: 2, vid: 'video', generation: 7, owner: 1, position: 0,
     item: {series_id: 'series'}, lastWrite: 0, presentation: {position: 30, waiting: true, lastAdvanceAt: 1000, bufferingSince: 1000}};
@@ -60,6 +61,31 @@ test('recovering from a drifting buffer seeks back before saving or revealing th
   const f = fixture(); load(f.context, 'markPlaybackStarted', 'checkPlaybackProgress');
   f.context.markPlaybackStarted(f.playback);
   assert.equal(f.video.currentTime, 30);
+  assert.equal(f.playback.presentation.waiting, true);
+  assert.equal(f.playback.presentation.resyncing, true);
+  f.context.markPlaybackStarted(f.playback);
+  assert.equal(f.playback.presentation.waiting, false);
+  assert.equal(f.playback.presentation.resyncing, false);
+  assert.equal(f.playback.presentation.position, 30);
+});
+test('a repeated premature playing callback cannot unlock a drifting buffer', () => {
+  const f = fixture(); load(f.context, 'markPlaybackStarted', 'checkPlaybackProgress');
+  f.context.markPlaybackStarted(f.playback);
+  f.video.currentTime = 40;
+  f.context.markPlaybackStarted(f.playback);
+  assert.equal(f.playback.presentation.waiting, true);
+  assert.equal(f.playback.presentation.position, 30);
+});
+test('a stale seek acknowledgement cannot overwrite the last watched position', () => {
+  const f = fixture();
+  f.playback.presentation.resyncing = true;
+  f.playback.presentation.resyncTarget = 30;
+  load(f.context, 'recordPlaybackSeek', 'readPlaybackFrames');
+  assert.equal(f.context.recordPlaybackSeek(f.playback, f.video, true), false);
+  assert.equal(f.playback.presentation.position, 30);
+  f.video.currentTime = 31;
+  assert.equal(f.context.recordPlaybackSeek(f.playback, f.video, true), true);
+  assert.equal(f.playback.presentation.position, 30);
 });
 test('both editions keep the screen on during buffering and release it when paused or backgrounded', () => {
   const f = fixture(); load(f.context, 'updatePlaybackPower', 'watchPlayback');
@@ -123,6 +149,18 @@ test('remote rewind during buffering is relative to the last watched position', 
   load(f.context, 'seekBy', 'syncNativePlayerBounds');
   assert.equal(f.context.seekBy(-10, true), true);
   assert.equal(selected, 20);
+});
+test('a manual seek replaces an in-flight automatic resync target', () => {
+  const f = fixture();
+  f.playback.presentation.resyncing = true;
+  f.playback.presentation.resyncTarget = 30;
+  f.context.showNotice = () => {};
+  f.context.clockText = String;
+  f.context.revealControls = () => {};
+  load(f.context, 'seekTo', 'syncNativePlayerBounds');
+  assert.equal(f.context.seekTo(55), true);
+  assert.equal(f.playback.presentation.resyncing, false);
+  assert.equal(f.playback.presentation.resyncTarget, null);
 });
 
 test('switching quality while buffering retains the last watched position', async () => {
